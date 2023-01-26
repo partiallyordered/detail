@@ -1,10 +1,11 @@
 use std::process::ExitCode;
+use serde::Serialize;
 use tokio::fs::{read_dir, DirEntry};
 use thiserror::Error;
 use futures::stream::FuturesOrdered;
 use futures::StreamExt;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct EntryInfo {
     name: String,
 }
@@ -13,6 +14,8 @@ struct EntryInfo {
 enum Error {
     #[error("Failed to read directory contents {0}")]
     FailedToReadDirContents(String, std::io::Error),
+    #[error("Failed to serialize path {0}: {1}")]
+    FailedToSerializePath(String, serde_json::Error)
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -38,10 +41,10 @@ async fn _main() -> Result<()> {
     }
     if let Some(first_res) = stream.next().await {
         let first_res = first_res.unwrap().unwrap();
-        print!("\"{}\"", serialize_entry_info(first_res).unwrap());
+        print!("{}", serialize_entry_info(first_res).unwrap());
         while let Some(subsequent_res) = stream.next().await {
             match subsequent_res {
-                Ok(Ok(res)) => print!(",\"{}\"", serialize_entry_info(res).unwrap()),
+                Ok(Ok(res)) => print!(",{}", serialize_entry_info(res).unwrap()),
                 _ => print!("uh oh"),
             }
         }
@@ -51,7 +54,7 @@ async fn _main() -> Result<()> {
 }
 
 fn serialize_entry_info(entry: EntryInfo) -> Result<String> {
-    Ok(format!("{}", entry.name))
+    serde_json::to_string(&entry).map_err(|e| Error::FailedToSerializePath(entry.name, e))
 }
 
 async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
