@@ -49,7 +49,10 @@ type Result<T> = std::result::Result<T, Error>;
 #[tokio::main]
 async fn main() -> ExitCode {
     match _main().await {
-        Err(_) => ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("{}", e);
+            ExitCode::FAILURE
+        }
         Ok(_) => ExitCode::SUCCESS
     }
 }
