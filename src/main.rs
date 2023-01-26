@@ -19,6 +19,7 @@ struct EntryInfo {
     name: String,
     #[serde(rename = "type")]
     file_type: EntryType,
+    size: u64,
     accessed: String,
     modified: String,
 }
@@ -113,5 +114,6 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
         file_type,
         accessed,
         modified,
+        size: metadata.len(),
     })
 }
