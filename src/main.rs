@@ -16,12 +16,19 @@ enum EntryType {
 
 #[derive(Debug, Serialize)]
 struct EntryInfo {
+    // Fields are serialized in the order they're listed here.
+
     name: String,
+
+    // rename "type" because it's probably best to avoid the name "type" in the codebase
     #[serde(rename = "type")]
     file_type: EntryType,
+
     size: u64,
-    accessed: String,
     modified: String,
+    accessed: String,
+
+    // TODO: created? not always available
 }
 
 #[derive(Error, Debug)]
@@ -110,10 +117,10 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
     };
 
     Ok(EntryInfo {
-        name: name.strip_prefix("./").unwrap_or(&name).to_string(),
-        file_type,
         accessed,
+        file_type,
         modified,
+        name: name.strip_prefix("./").unwrap_or(&name).to_string(),
         size: metadata.len(),
     })
 }
