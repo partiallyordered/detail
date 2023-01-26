@@ -20,6 +20,7 @@ struct EntryInfo {
     #[serde(rename = "type")]
     file_type: EntryType,
     accessed: String,
+    modified: String,
 }
 
 #[derive(Error, Debug)]
@@ -101,9 +102,16 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
         accessed.to_rfc3339()
     };
 
+    let modified = {
+        let modified = metadata.modified().map_err(|e| Error::FailedToRetrieveFileAccessTime(name.clone(), e))?;
+        let modified: DateTime<Utc> = modified.into();
+        modified.to_rfc3339()
+    };
+
     Ok(EntryInfo {
         name: name.strip_prefix("./").unwrap_or(&name).to_string(),
         file_type,
         accessed,
+        modified,
     })
 }
