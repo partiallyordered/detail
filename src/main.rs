@@ -5,6 +5,7 @@ use thiserror::Error;
 use futures::stream::FuturesOrdered;
 use futures::StreamExt;
 use chrono::{DateTime, Utc};
+use git2::Repository;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -12,6 +13,30 @@ enum EntryType {
     File,
     Dir,
     Symlink,
+}
+
+// TODO: investigate whether it's possible to provide a serialize implementation for
+// git2::FileStatus (or whatever the type is) instead of mapping to this enum
+// TODO: this is a bitfield in actuality. exa appears to have two columns to display the git
+// status. Why's that?
+#[derive(Debug, Serialize)]
+enum FileGitStatus {
+    #[serde(rename = "M")]
+    Modified,
+    #[serde(rename = "C")]
+    Current,
+    #[serde(rename = "N")]
+    New,
+    #[serde(rename = "I")]
+    Ignored,
+    #[serde(rename = "!")]
+    Conflict,
+    #[serde(rename = "D")]
+    Deleted, // I *think* it's possible to have a file deleted in the repo but not in the file system
+    #[serde(rename = "R")]
+    Renamed,
+    #[serde(rename = "")]
+    NonPrintingStatus,
 }
 
 #[derive(Debug, Serialize)]
@@ -26,6 +51,12 @@ struct EntryInfo {
 
     size: u64,
     modified: String,
+
+    // rename "file_git_status" to "git" because it's probably best to minimize the name "git" in
+    // the codebase
+    #[serde(rename = "git")]
+    file_git_status: FileGitStatus,
+
     accessed: String,
 
     // TODO: created? not always available
@@ -43,6 +74,8 @@ enum Error {
     FailedToRetrieveFileMetadata(String, std::io::Error),
     #[error("Failed to retrieve file last access time for {0}: {1}")]
     FailedToRetrieveFileAccessTime(String, std::io::Error),
+    #[error("Failed to canonicalize path {0}: {1}")]
+    FailedToCanonicalizePath(String, std::io::Error),
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -92,7 +125,8 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
     // - perhaps a DirEntry::Into implementation for EntryInfo? So we can consume it. Is that how
     //   that works?
     // - Improve this nasty as_os_str, to_string_lossy, etc. chain
-    let name: String = entry.path().as_os_str().to_string_lossy().to_string();
+    let path = entry.path();
+    let name: String = path.as_os_str().to_string_lossy().to_string();
     let metadata = entry.metadata().await.map_err(|e| Error::FailedToRetrieveFileMetadata(name.clone(), e))?;
 
     // TODO: is there an existing enum for file type? Can the scenario where no type is detected
@@ -119,11 +153,57 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
         modified.to_rfc3339()
     };
 
+    // TODO: does git_status work on symlinks? Symlink directories?
+    let git_status = if metadata.is_dir() {
+        // TODO: recurse into directory for status (optionally?). Other tools, e.g. exa seem to
+        // show status on directories.
+        FileGitStatus::NonPrintingStatus
+    } else {
+        let path_abs = path.canonicalize().map_err(|e| Error::FailedToCanonicalizePath(name.clone(), e))?;
+        let path = path.strip_prefix("./").unwrap_or(&path);
+        match Repository::discover(path)
+            .and_then(|repo| {
+                // TODO: re-examine the "common path" logic when it's not 1am. There's something
+                // funky about it and I can't figure out what.
+                let path_rel = path_abs.strip_prefix(repo.path().parent().unwrap()).unwrap();
+                repo.status_file(&path_rel)
+            }) {
+                Ok(status) => {
+                    // TODO: thorough investigation whether the current mappings here are
+                    // sensible. I don't know the difference between the WT_ and INDEX_
+                    // prefixes, for example. Also, this is a bitfield. Probably we should just map
+                    // the bitfield into a record/object in the response.
+                    if status == git2::Status::CURRENT { FileGitStatus::NonPrintingStatus }
+                    else if status.is_wt_new() { FileGitStatus::New }
+                    else if status.is_ignored() { FileGitStatus::Ignored }
+                    else if status.is_conflicted() { FileGitStatus::Conflict }
+                    else if status.is_index_new() { FileGitStatus::New }
+                    else if status.is_wt_deleted() { FileGitStatus::Deleted }
+                    else if status.is_wt_renamed() { FileGitStatus::Renamed }
+                    else if status.is_wt_modified() { FileGitStatus::Modified }
+                    else if status.is_index_modified() { FileGitStatus::Modified }
+                    else if status.is_index_deleted() { FileGitStatus::Deleted }
+                    // TODO: what is typechange? Should they be NonPrintingStatus?
+                    else if status.is_wt_typechange() { FileGitStatus::NonPrintingStatus }
+                    else if status.is_index_typechange() { FileGitStatus::NonPrintingStatus }
+                    else { FileGitStatus::NonPrintingStatus }
+                }
+                Err(e) => {
+                    // TODO: actually examine the errors returned here, sometimes it might be
+                    // appropriate to return an error to the user instead of just returning no status
+                    // information
+                    FileGitStatus::NonPrintingStatus
+                }
+            }
+    };
+
     Ok(EntryInfo {
         accessed,
         file_type,
         modified,
         name: name.strip_prefix("./").unwrap_or(&name).to_string(),
         size: metadata.len(),
+
+        file_git_status: git_status,
     })
 }
