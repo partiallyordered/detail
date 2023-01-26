@@ -4,6 +4,7 @@ use tokio::fs::{read_dir, DirEntry};
 use thiserror::Error;
 use futures::stream::FuturesOrdered;
 use futures::StreamExt;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -18,6 +19,7 @@ struct EntryInfo {
     name: String,
     #[serde(rename = "type")]
     file_type: EntryType,
+    accessed: String,
 }
 
 #[derive(Error, Debug)]
@@ -30,6 +32,8 @@ enum Error {
     FailedToRetrieveFileType(String),
     #[error("Failed to retrieve file metadata for {0}: {1}")]
     FailedToRetrieveFileMetadata(String, std::io::Error),
+    #[error("Failed to retrieve file last access time for {0}: {1}")]
+    FailedToRetrieveFileAccessTime(String, std::io::Error),
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -91,8 +95,15 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
         return Err(Error::FailedToRetrieveFileType(name))
     };
 
+    let accessed = {
+        let accessed = metadata.accessed().map_err(|e| Error::FailedToRetrieveFileAccessTime(name.clone(), e))?;
+        let accessed: DateTime<Utc> = accessed.into();
+        accessed.to_rfc3339()
+    };
+
     Ok(EntryInfo {
         name: name.strip_prefix("./").unwrap_or(&name).to_string(),
         file_type,
+        accessed,
     })
 }
