@@ -37,13 +37,21 @@ async fn _main() -> Result<()> {
         );
     }
     if let Some(first_res) = stream.next().await {
-        print!("{:?}", first_res);
+        let first_res = first_res.unwrap().unwrap();
+        print!("\"{}\"", serialize_entry_info(first_res).unwrap());
         while let Some(subsequent_res) = stream.next().await {
-            print!(",{:?}", subsequent_res);
+            match subsequent_res {
+                Ok(Ok(res)) => print!(",\"{}\"", serialize_entry_info(res).unwrap()),
+                _ => print!("uh oh"),
+            }
         }
     }
     print!("]");
     Ok(())
+}
+
+fn serialize_entry_info(entry: EntryInfo) -> Result<String> {
+    Ok(format!("{}", entry.name))
 }
 
 async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
