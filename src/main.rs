@@ -6,8 +6,18 @@ use futures::stream::FuturesOrdered;
 use futures::StreamExt;
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum EntryType {
+    File,
+    Dir,
+    Symlink,
+}
+
+#[derive(Debug, Serialize)]
 struct EntryInfo {
     name: String,
+    #[serde(rename = "type")]
+    file_type: EntryType,
 }
 
 #[derive(Error, Debug)]
@@ -15,7 +25,11 @@ enum Error {
     #[error("Failed to read directory contents {0}")]
     FailedToReadDirContents(String, std::io::Error),
     #[error("Failed to serialize path {0}: {1}")]
-    FailedToSerializePath(String, serde_json::Error)
+    FailedToSerializePath(String, serde_json::Error),
+    #[error("Failed to retrieve file type for {0}")]
+    FailedToRetrieveFileType(String),
+    #[error("Failed to retrieve file metadata for {0}: {1}")]
+    FailedToRetrieveFileMetadata(String, std::io::Error),
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -63,7 +77,22 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
     //   that works?
     // - Improve this nasty as_os_str, to_string_lossy, etc. chain
     let name: String = entry.path().as_os_str().to_string_lossy().to_string();
+    let metadata = entry.metadata().await.map_err(|e| Error::FailedToRetrieveFileMetadata(name.clone(), e))?;
+
+    // TODO: is there an existing enum for file type? Can the scenario where no type is detected
+    // occur?
+    let file_type = if metadata.file_type().is_dir() {
+        EntryType::Dir
+    } else if metadata.is_file() {
+        EntryType::File
+    } else if metadata.is_symlink() {
+        EntryType::Symlink
+    } else {
+        return Err(Error::FailedToRetrieveFileType(name))
+    };
+
     Ok(EntryInfo {
-        name: name.strip_prefix("./").unwrap_or(&name).to_string()
+        name: name.strip_prefix("./").unwrap_or(&name).to_string(),
+        file_type,
     })
 }
