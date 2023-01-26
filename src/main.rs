@@ -4,6 +4,11 @@ use thiserror::Error;
 use futures::stream::FuturesOrdered;
 use futures::StreamExt;
 
+#[derive(Debug)]
+struct EntryInfo {
+    name: String,
+}
+
 #[derive(Error, Debug)]
 enum Error {
     #[error("Failed to read directory contents {0}")]
@@ -24,27 +29,30 @@ async fn _main() -> Result<()> {
     let mut stream = FuturesOrdered::new();
     let mut dir_entries = read_dir(path).await.map_err(|e| Error::FailedToReadDirContents(path.to_string(), e))?;
     print!("[");
-    if let Some(dir_entry) = dir_entries.next_entry().await.map_err(|e| Error::FailedToReadDirContents(path.to_string(), e))? {
+    while let Some(dir_entry) = dir_entries.next_entry().await.map_err(|e| Error::FailedToReadDirContents(path.to_string(), e))? {
         stream.push_back(
             tokio::spawn(async move {
                 process_dir_entry(dir_entry).await
             })
         );
-        while let Some(dir_entry) = dir_entries.next_entry().await.map_err(|e| Error::FailedToReadDirContents(path.to_string(), e))? {
-            stream.push_back(
-                tokio::spawn(async move {
-                    process_dir_entry(dir_entry).await.map(|s| format!(",{s}"))
-                })
-            );
-        }
     }
-    while let Some(res) = stream.next().await {
-        print!("{:?}", res);
+    if let Some(first_res) = stream.next().await {
+        print!("{:?}", first_res);
+        while let Some(subsequent_res) = stream.next().await {
+            print!(",{:?}", subsequent_res);
+        }
     }
     print!("]");
     Ok(())
 }
 
-async fn process_dir_entry(entry: DirEntry) -> Result<String> {
-    Ok(format!("{:?}", entry))
+async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
+    // TODO:
+    // - perhaps a DirEntry::Into implementation for EntryInfo? So we can consume it. Is that how
+    //   that works?
+    // - Improve this nasty as_os_str, to_string_lossy, etc. chain
+    let name: String = entry.path().as_os_str().to_string_lossy().to_string();
+    Ok(EntryInfo {
+        name: name.strip_prefix("./").unwrap_or(&name).to_string()
+    })
 }
