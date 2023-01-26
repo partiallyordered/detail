@@ -1,0 +1,78 @@
+- releases
+- take positional parameters (like normal ls)
+- clippy
+- readme
+- extended file attributes
+- permissions
+- execute bit, etc.
+- mime type
+- everything in https://doc.rust-lang.org/std/fs/struct.Metadata.html
+  - see also `impl MetadataExt for Metadata`
+- output formats?
+  - this is a "maximal ls" after all
+- print terminal escape codes for
+  - links
+  - colour
+- see what options ls and exa offer
+- print newline after output?
+- colour file names (what logic does nushell ls use?)
+- file types for different platforms? see Unix/Windows/WASI-specific FileExt e.g. https://doc.rust-lang.org/nightly/std/fs/struct.FileType.html
+- how to integrate with nushell?
+  - how to return native nushell types?
+  - perhaps by producing NUON?
+  - look at: `ls | to nuon` and `ls | to nuon | from nuon`
+    - and `ls | to nuon | save blah` and `blah | from nuon`
+  - nushell uses rfc2822, chrono has a .to_rfc2822 method
+  - made an experiment in creating a nuon file from current output; notes
+    - needed to remove quotes around values
+    - I don't *think* I needed to change the date format, and the dates were displayed nicely by nushell
+    - needed to have empty columns (e.g. an absence of git statuses) be either null or empty string
+    - adding the b (bytes) suffix was sufficient for nushell to correctly interpret the type of the
+      file size
+    - I couldn't recover the fancy colored file name and fancy file links for the terminal that
+      nushell ls produces- but in fact `ls | to nuon | from nuon` discards these also. Would it
+      therefore make sense to architect this so it can easily be a nushell plugin, instead of
+      serializing to nuon?
+- date formatting options for all dates, and for each date (i.e. --date-format
+  --accessed-date-format)
+- file size formatting options
+  - including metric & binary formatting options?
+- config file
+  - walk up the path from the working directory, then a config directory ($XDG_CONFIG_HOME?)
+- when the user supplies arguments, collect all the git repositories beforehand, rather than
+  getting a git repository per-file
+  - or perhaps memoize this by writing a "git repository service" which keeps repositories open
+    until the program ends or it's destroyed
+  - does this help at all? it's possible to have a single file tracked by two repositories, for
+    which the git dir (normally .git, but not necessarily) can be at the same path, but probably
+    can be in different paths. In any case, repository::discover could plausibly find one or the
+    other. What do we do- just ignore one of them? Probably, it's gotta be an unusual use-case and
+    users with files in multiple repos would probably expect to see odd results. *Still*, this is
+    possible:
+    - parent_dir
+      - .git
+        - child_dir
+          - .git
+          - file_tracked_by_parent_dir_git_repo_but_not_by_child_dir_git_repo
+    what does libgit2 do in this case? It appears to return a single result, presumably it walks up
+    the directory hierarchy and stops once it finds a gitdir (.git?) regardless whether that gitdir
+    is tracking any given file
+- what's the funky ordering nushell ls uses? Is it actually the same as GNU ls?
+- optionally recurse into subdirectories? Or leave that to a different tool?
+- pare down dependencies
+
+Options
+--git
+  Short git info, single-character e.g. "i", "m" representing "ignored", "modified", etc.
+--git-long
+  Long git info, words like "ignored", "modified", etc.
+--git-full
+  Per-file information e.g. number of lines added/removed, probably represented as a record.
+  Though perhaps the only additional information that's interested is indeed lines added/removed,
+  rather than status, in which case --git-status and --git-changed or similar might be more
+  appropriate.
+--jsonl
+  Print jsonl instead of a json array- some tools handle jsonl and it's probably easier to parse one object per
+  line than to parse a huge array
+--print-full-path
+--follow-symlinks?
