@@ -81,7 +81,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match _main().await {
+    match run().await {
         Err(e) => {
             eprintln!("{}", e);
             ExitCode::FAILURE
@@ -90,7 +90,7 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn _main() -> Result<()> {
+async fn run() -> Result<()> {
     let path = ".";
     let mut stream = FuturesOrdered::new();
     let mut dir_entries = read_dir(path).await.map_err(|e| Error::FailedToReadDirContents(path.to_string(), e))?;
