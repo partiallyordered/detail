@@ -6,6 +6,12 @@ use futures::stream::FuturesOrdered;
 use futures::StreamExt;
 use chrono::{DateTime, Utc};
 use git2::Repository;
+use clap::{Parser, ValueEnum};
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+/// A maximal implementation of ls
+struct Args {}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -19,6 +25,7 @@ enum EntryType {
 // git2::FileStatus (or whatever the type is) instead of mapping to this enum
 // TODO: this is a bitfield in actuality. exa appears to have two columns to display the git
 // status. Why's that? Index and worktree?
+// Ref: https://github.com/nushell/nushell/blob/main/crates/nu_plugin_gstat/src/gstat.rs
 #[derive(Debug, Serialize)]
 enum FileGitStatus {
     #[serde(rename = "M")]
@@ -81,6 +88,8 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    let args = Args::parse();
+
     match run().await {
         Err(e) => {
             eprintln!("{}", e);
