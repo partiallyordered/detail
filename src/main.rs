@@ -18,7 +18,7 @@ enum EntryType {
 // TODO: investigate whether it's possible to provide a serialize implementation for
 // git2::FileStatus (or whatever the type is) instead of mapping to this enum
 // TODO: this is a bitfield in actuality. exa appears to have two columns to display the git
-// status. Why's that?
+// status. Why's that? Index and worktree?
 #[derive(Debug, Serialize)]
 enum FileGitStatus {
     #[serde(rename = "M")]
@@ -65,17 +65,17 @@ struct EntryInfo {
 #[derive(Error, Debug)]
 enum Error {
     #[error("Failed to read directory contents {0}")]
-    FailedToReadDirContents(String, std::io::Error),
+    DirContentsRead(String, std::io::Error),
     #[error("Failed to serialize path {0}: {1}")]
-    FailedToSerializePath(String, serde_json::Error),
+    EntrySerialize(String, serde_json::Error),
     #[error("Failed to retrieve file type for {0}")]
-    FailedToRetrieveFileType(String),
+    FileTypeRetrieve(String),
     #[error("Failed to retrieve file metadata for {0}: {1}")]
-    FailedToRetrieveFileMetadata(String, std::io::Error),
+    MetadataRetrieve(String, std::io::Error),
     #[error("Failed to retrieve file last access time for {0}: {1}")]
-    FailedToRetrieveFileAccessTime(String, std::io::Error),
+    AccessTimeRetrieve(String, std::io::Error),
     #[error("Failed to canonicalize path {0}: {1}")]
-    FailedToCanonicalizePath(String, std::io::Error),
+    PathCanonicalize(String, std::io::Error),
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -93,9 +93,9 @@ async fn main() -> ExitCode {
 async fn run() -> Result<()> {
     let path = ".";
     let mut stream = FuturesOrdered::new();
-    let mut dir_entries = read_dir(path).await.map_err(|e| Error::FailedToReadDirContents(path.to_string(), e))?;
+    let mut dir_entries = read_dir(path).await.map_err(|e| Error::DirContentsRead(path.to_string(), e))?;
     print!("[");
-    while let Some(dir_entry) = dir_entries.next_entry().await.map_err(|e| Error::FailedToReadDirContents(path.to_string(), e))? {
+    while let Some(dir_entry) = dir_entries.next_entry().await.map_err(|e| Error::DirContentsRead(path.to_string(), e))? {
         stream.push_back(
             tokio::spawn(async move {
                 process_dir_entry(dir_entry).await
@@ -117,7 +117,7 @@ async fn run() -> Result<()> {
 }
 
 fn serialize_entry_info(entry: EntryInfo) -> Result<String> {
-    serde_json::to_string(&entry).map_err(|e| Error::FailedToSerializePath(entry.name, e))
+    serde_json::to_string(&entry).map_err(|e| Error::EntrySerialize(entry.name, e))
 }
 
 async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
@@ -127,7 +127,7 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
     // - Improve this nasty as_os_str, to_string_lossy, etc. chain
     let path = entry.path();
     let name: String = path.as_os_str().to_string_lossy().to_string();
-    let metadata = entry.metadata().await.map_err(|e| Error::FailedToRetrieveFileMetadata(name.clone(), e))?;
+    let metadata = entry.metadata().await.map_err(|e| Error::MetadataRetrieve(name.clone(), e))?;
 
     // TODO: is there an existing enum for file type? Can the scenario where no type is detected
     // occur?
@@ -138,17 +138,17 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
     } else if metadata.is_symlink() {
         EntryType::Symlink
     } else {
-        return Err(Error::FailedToRetrieveFileType(name))
+        return Err(Error::FileTypeRetrieve(name))
     };
 
     let accessed = {
-        let accessed = metadata.accessed().map_err(|e| Error::FailedToRetrieveFileAccessTime(name.clone(), e))?;
+        let accessed = metadata.accessed().map_err(|e| Error::AccessTimeRetrieve(name.clone(), e))?;
         let accessed: DateTime<Utc> = accessed.into();
         accessed.to_rfc3339()
     };
 
     let modified = {
-        let modified = metadata.modified().map_err(|e| Error::FailedToRetrieveFileAccessTime(name.clone(), e))?;
+        let modified = metadata.modified().map_err(|e| Error::AccessTimeRetrieve(name.clone(), e))?;
         let modified: DateTime<Utc> = modified.into();
         modified.to_rfc3339()
     };
@@ -159,7 +159,7 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
         // show status on directories.
         FileGitStatus::NonPrintingStatus
     } else {
-        let path_abs = path.canonicalize().map_err(|e| Error::FailedToCanonicalizePath(name.clone(), e))?;
+        let path_abs = path.canonicalize().map_err(|e| Error::PathCanonicalize(name.clone(), e))?;
         let path = path.strip_prefix("./").unwrap_or(&path);
         match Repository::discover(path)
             .and_then(|repo| {
