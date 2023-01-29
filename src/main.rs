@@ -7,13 +7,27 @@ use futures::StreamExt;
 use chrono::{DateTime, Utc};
 use git2::Repository;
 use clap::{Parser, ValueEnum};
+use derive_more::Display;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-/// A maximal implementation of ls
-struct Args {}
+/// A full-fat implementation of ls
+struct Args {
+    /// Output data type
+    #[arg(short, long, default_value="json")]
+    encoding: OutputEncoding,
+}
 
-#[derive(Debug, Serialize)]
+#[derive(ValueEnum, Clone, Debug, PartialEq, Copy)]
+enum OutputEncoding {
+    /// Produce Nuon (Nushell data)
+    #[cfg(feature = "nu")]
+    Nuon,
+    Json,
+    Jsonl,
+}
+
+#[derive(Debug, Serialize, Display)]
 #[serde(rename_all = "lowercase")]
 enum EntryType {
     File,
@@ -26,24 +40,29 @@ enum EntryType {
 // TODO: this is a bitfield in actuality. exa appears to have two columns to display the git
 // status. Why's that? Index and worktree?
 // Ref: https://github.com/nushell/nushell/blob/main/crates/nu_plugin_gstat/src/gstat.rs
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Display)]
 enum FileGitStatus {
     #[serde(rename = "M")]
+    #[display(fmt = "M")]
     Modified,
     #[serde(rename = "C")]
+    #[display(fmt = "C")]
     Current,
     #[serde(rename = "N")]
+    #[display(fmt = "N")]
     New,
     #[serde(rename = "I")]
+    #[display(fmt = "I")]
     Ignored,
     #[serde(rename = "!")]
+    #[display(fmt = "!")]
     Conflict,
     #[serde(rename = "D")]
+    #[display(fmt = "D")]
     Deleted, // I *think* it's possible to have a file deleted in the repo but not in the file system
     #[serde(rename = "R")]
+    #[display(fmt = "R")]
     Renamed,
-    #[serde(rename = "")]
-    NonPrintingStatus,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,7 +81,7 @@ struct EntryInfo {
     // rename "file_git_status" to "git" because it's probably best to minimize the name "git" in
     // the codebase
     #[serde(rename = "git")]
-    file_git_status: FileGitStatus,
+    file_git_status: Option<FileGitStatus>,
 
     accessed: String,
 
@@ -90,7 +109,7 @@ type Result<T> = std::result::Result<T, Error>;
 async fn main() -> ExitCode {
     let args = Args::parse();
 
-    match run().await {
+    match run(args).await {
         Err(e) => {
             eprintln!("{}", e);
             ExitCode::FAILURE
@@ -99,11 +118,19 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run() -> Result<()> {
+async fn run(args: Args) -> Result<()> {
     let path = ".";
     let mut stream = FuturesOrdered::new();
     let mut dir_entries = read_dir(path).await.map_err(|e| Error::DirContentsRead(path.to_string(), e))?;
-    print!("[");
+
+    match args.encoding {
+        OutputEncoding::Json => { print!("[") },
+        OutputEncoding::Nuon => {
+            print!("[[name, type, size, modified, git, accessed]; ");
+        },
+        OutputEncoding::Jsonl => {},
+    }
+
     while let Some(dir_entry) = dir_entries.next_entry().await.map_err(|e| Error::DirContentsRead(path.to_string(), e))? {
         stream.push_back(
             tokio::spawn(async move {
@@ -111,22 +138,57 @@ async fn run() -> Result<()> {
             })
         );
     }
+
     if let Some(first_res) = stream.next().await {
         let first_res = first_res.unwrap()?;
-        print!("{}", serialize_entry_info(first_res).unwrap());
+        print!("{}", serialize_entry_info(first_res, args.encoding).unwrap());
         while let Some(subsequent_res) = stream.next().await {
             match subsequent_res {
-                Ok(res) => print!(",{}", serialize_entry_info(res?).unwrap()),
+                Ok(res) => {
+                    let res = res?;
+                    match args.encoding {
+                        // TODO: JSON does not require spaces, does nuon? Presumably not
+                        // should/could we omit them?
+                        OutputEncoding::Json => { print!(","); },
+                        OutputEncoding::Nuon => { print!(", "); },
+                        OutputEncoding::Jsonl => { print!("\n"); },
+                    }
+                    print!("{}", serialize_entry_info(res, args.encoding).unwrap())
+                },
+                // TODO: this is really top-notch..
                 _ => print!("uh oh"),
             }
         }
     }
-    print!("]");
+
+    match args.encoding {
+        OutputEncoding::Json => { print!("]") },
+        OutputEncoding::Nuon => {
+            print!("]");
+        },
+        OutputEncoding::Jsonl => {},
+    }
+
     Ok(())
 }
 
-fn serialize_entry_info(entry: EntryInfo) -> Result<String> {
-    serde_json::to_string(&entry).map_err(|e| Error::EntrySerialize(entry.name, e))
+fn serialize_entry_info(entry: EntryInfo, encoding: OutputEncoding) -> Result<String> {
+    match encoding {
+        OutputEncoding::Jsonl | OutputEncoding::Json => {
+            serde_json::to_string(&entry).map_err(|e| Error::EntrySerialize(entry.name, e))
+        },
+        OutputEncoding::Nuon => {
+            Ok(format!(
+                "[{}, {}, {}, {}, {}, {}]",
+                entry.name,
+                entry.file_type,
+                entry.size,
+                entry.modified,
+                entry.file_git_status.map(|st| st.to_string()).unwrap_or("\"\"".to_string()),
+                entry.accessed,
+            ))
+        },
+    }
 }
 
 async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
@@ -166,7 +228,7 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
     let git_status = if metadata.is_dir() {
         // TODO: recurse into directory for status (optionally?). Other tools, e.g. exa seem to
         // show status on directories.
-        FileGitStatus::NonPrintingStatus
+        None
     } else {
         let path_abs = path.canonicalize().map_err(|e| Error::PathCanonicalize(name.clone(), e))?;
         let path = path.strip_prefix("./").unwrap_or(&path);
@@ -181,27 +243,27 @@ async fn process_dir_entry(entry: DirEntry) -> Result<EntryInfo> {
                     // TODO: thorough investigation whether the current mappings here are
                     // sensible. I don't know the difference between the WT_ and INDEX_
                     // prefixes, for example. Also, this is a bitfield. Probably we should just map
-                    // the bitfield into a record/object in the response.
-                    if status == git2::Status::CURRENT { FileGitStatus::NonPrintingStatus }
-                    else if status.is_wt_new() { FileGitStatus::New }
-                    else if status.is_ignored() { FileGitStatus::Ignored }
-                    else if status.is_conflicted() { FileGitStatus::Conflict }
-                    else if status.is_index_new() { FileGitStatus::New }
-                    else if status.is_wt_deleted() { FileGitStatus::Deleted }
-                    else if status.is_wt_renamed() { FileGitStatus::Renamed }
-                    else if status.is_wt_modified() { FileGitStatus::Modified }
-                    else if status.is_index_modified() { FileGitStatus::Modified }
-                    else if status.is_index_deleted() { FileGitStatus::Deleted }
-                    // TODO: what is typechange? Should they be NonPrintingStatus?
-                    else if status.is_wt_typechange() { FileGitStatus::NonPrintingStatus }
-                    else if status.is_index_typechange() { FileGitStatus::NonPrintingStatus }
-                    else { FileGitStatus::NonPrintingStatus }
+                    // the bitfield into a string or record/object in the response.
+                    if status == git2::Status::CURRENT { None }
+                    else if status.is_wt_new() { Some(FileGitStatus::New) }
+                    else if status.is_ignored() { Some(FileGitStatus::Ignored) }
+                    else if status.is_conflicted() { Some(FileGitStatus::Conflict) }
+                    else if status.is_index_new() { Some(FileGitStatus::New) }
+                    else if status.is_wt_deleted() { Some(FileGitStatus::Deleted) }
+                    else if status.is_wt_renamed() { Some(FileGitStatus::Renamed) }
+                    else if status.is_wt_modified() { Some(FileGitStatus::Modified) }
+                    else if status.is_index_modified() { Some(FileGitStatus::Modified) }
+                    else if status.is_index_deleted() { Some(FileGitStatus::Deleted) }
+                    // TODO: what is typechange? Should they be None?
+                    else if status.is_wt_typechange() { None }
+                    else if status.is_index_typechange() { None }
+                    else { None }
                 }
                 Err(e) => {
                     // TODO: actually examine the errors returned here, sometimes it might be
                     // appropriate to return an error to the user instead of just returning no status
                     // information
-                    FileGitStatus::NonPrintingStatus
+                    None
                 }
             }
     };

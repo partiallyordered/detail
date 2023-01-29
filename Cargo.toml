@@ -1,4 +1,9 @@
 [package]
+# TODO:
+# authors =
+# description =
+# repository =
+# license =
 name = "detail"
 version = "0.1.0"
 edition = "2021"
@@ -8,9 +13,18 @@ edition = "2021"
 [dependencies]
 chrono = "0.4.23"
 clap = { version = "4.1.4", features = ["derive"] }
+derive_more = "0.99.17"
 futures = "0.3.25"
 git2 = "0.16.1"
+nu-errors = { version = "0.44.0", optional = true }
+nu-plugin = { version = "0.74.0", optional = true }
+nu-protocol = { version = "0.74.0", optional = true }
+# nu-source = { version = "0.44.0", optional = true }
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.91"
 thiserror = "1.0.38"
 tokio = { version = "1.23.0", features = ["sync", "fs", "macros", "rt-multi-thread"] }
+
+[features]
+default = ["nu"]
+nu = ["dep:nu-errors", "dep:nu-plugin", "dep:nu-protocol"] #, "dep:nu-source"]

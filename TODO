@@ -1,5 +1,6 @@
 - releases
 - take positional parameters (like normal ls)
+- take paths on stdin
 - clippy
 - readme
 - extended file attributes
@@ -12,10 +13,15 @@
   - this is a "maximal ls" after all
 - print terminal escape codes for
   - links
-  - colour
+  - color
+    - detect whether output is terminal or file and color accordingly
+    - print different colors for different types? or just different colors for keys and values?
+      give the user options?
 - see what options ls and exa offer
+  - nushell's implementation of ls: https://github.com/nushell/nushell/blob/76292ef10c6eb4c3eaaba7cf1ee39348580bc55f/crates/nu-command/src/filesystem/ls.rs
 - print newline after output?
-- colour file names (what logic does nushell ls use?)
+- color file names (what logic does nushell ls use?)
+  - nushell's implementation of ls: https://github.com/nushell/nushell/blob/76292ef10c6eb4c3eaaba7cf1ee39348580bc55f/crates/nu-command/src/filesystem/ls.rs
 - file types for different platforms? see Unix/Windows/WASI-specific FileExt e.g. https://doc.rust-lang.org/nightly/std/fs/struct.FileType.html
 - how to integrate with nushell?
   - how to return native nushell types?
@@ -33,6 +39,13 @@
       nushell ls produces- but in fact `ls | to nuon | from nuon` discards these also. Would it
       therefore make sense to architect this so it can easily be a nushell plugin, instead of
       serializing to nuon?
+  - nushell plugins:
+    - https://www.nushell.sh/contributor-book/plugins.html
+    - https://github.com/nushell/nushell/tree/main/crates/nu_plugin_example
+    - https://www.nushell.sh/book/plugins.html#adding-a-plugin
+    - https://github.com/nushell/awesome-nu
+    - looks probable that it's possible to deliver a single binary that can act as a nushell plugin
+      *and* a "structured ls"
 - date formatting options for all dates, and for each date (i.e. --date-format
   --accessed-date-format)
 - file size formatting options
@@ -56,12 +69,19 @@
           - file_tracked_by_parent_dir_git_repo_but_not_by_child_dir_git_repo
     what does libgit2 do in this case? It appears to return a single result, presumably it walks up
     the directory hierarchy and stops once it finds a gitdir (.git?) regardless whether that gitdir
-    is tracking any given file
+    is tracking any given file. So we could at least assume that any files in the same directory
+    (but not the same hierarchy) have the same git repo.
 - what's the funky ordering nushell ls uses? Is it actually the same as GNU ls?
+  - nushell's implementation of ls: https://github.com/nushell/nushell/blob/76292ef10c6eb4c3eaaba7cf1ee39348580bc55f/crates/nu-command/src/filesystem/ls.rs
 - optionally recurse into subdirectories? Or leave that to a different tool?
 - pare down dependencies
+  - make some optional, so users can build with only the features they require
+- replace git2 with gitoxide?
+- what can usefully be exported as a library?
 
 Options
+--git-last-changed
+  File last changed date according to git (replace file-metadata modified datetime?)
 --git
   Short git info, single-character e.g. "i", "m" representing "ignored", "modified", etc.
 --git-long
